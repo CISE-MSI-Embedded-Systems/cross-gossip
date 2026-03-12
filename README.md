@@ -16,3 +16,8 @@ make
 3. Then click upload
 
 4. Repeat steps 2 through 3 for other devices
+
+
+## Run Tests
+
+cmake -S . -B build && cmake --build build && ctest --test-dir build
