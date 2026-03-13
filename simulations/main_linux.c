@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <mqueue.h>
+#include <fcntl.h>
 
 #include <sys/select.h>
 #include <sys/signal.h>
@@ -133,27 +135,44 @@ void platform_radio_tx(const uint8_t *data, uint8_t len) {
   return;
 }
 
+static uint32_t node_id;
+uint32_t platform_node_id(void) { return node_id; }
+
 void platform_log(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
 
-  printf("LOG: ");
+  printf("[NODE %d] ", node_id);
   vprintf(fmt, args);
   printf("\n");
 
   va_end(args);
 }
 
-static uint32_t node_id;
-uint32_t platform_node_id(void) { return node_id; }
+static char *trace_msg_mq_name;
+void platform_trace_msg(const GossipMsg *msg) {
+  TracedGossipMsg traced = {*msg, node_id};
+  static mqd_t trace_msg_mq = -1;
+  if (trace_msg_mq == -1) {
+    trace_msg_mq = mq_open(trace_msg_mq_name, O_WRONLY);
+  }
+
+  int mq_res = mq_send(trace_msg_mq, (char *)&traced, sizeof(TracedGossipMsg), 0);
+  if (mq_res == -1) {
+    perror("mq_res");
+    exit(1);
+  }
+}
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "usage: %s <node_id>\n", argv[0]);
+  if (argc < 3) {
+    fprintf(stderr, "usage: %s <node_id> <mq_name>\n", argv[0]);
     return 1;
   }
 
   node_id = (uint32_t)atoi(argv[1]);
+  trace_msg_mq_name = argv[2];
+
   // RX socket
   int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
   if (rx_fd < 0)
@@ -198,13 +217,11 @@ int main(int argc, char *argv[]) {
 
   fd_set readfds;
   while (1) {
-    printf("while\n");
     FD_ZERO(&readfds);
     if (rx_fd >= 0)
       FD_SET(rx_fd, &readfds);
     int ret = select(rx_fd + 1, &readfds, NULL, NULL, NULL);
     if (ret > 0 && FD_ISSET(rx_fd, &readfds)) {
-      printf("reading\n");
       uint8_t buf[1024];
       ssize_t n = read(rx_fd, buf, sizeof(buf));
       if (n > 0)

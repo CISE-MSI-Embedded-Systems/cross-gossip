@@ -1,3 +1,4 @@
 simulations/build/*
 simulations/.cache/
 build/*
+.cache/

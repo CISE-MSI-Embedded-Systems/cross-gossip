@@ -103,6 +103,10 @@ void platform_log(const char *fmt, ...) {
   Serial.println(buf);
 }
 
+void platform_trace_msg(const GossipMsg *msg) {
+  // TODO: tracing with multiple embedded devices isn't as easy
+}
+
 uint32_t platform_node_id(void) {
   // we have to have something better than this
   return NODE_ID;

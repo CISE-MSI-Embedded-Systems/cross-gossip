@@ -32,3 +32,9 @@ void platform_radio_tx(const uint8_t *data, uint8_t len);
 void platform_log(const char *fmt, ...);
 
 uint32_t platform_node_id(void);
+
+typedef struct {
+  GossipMsg msg;
+  uint32_t node_id;
+} TracedGossipMsg;
+void platform_trace_msg(const GossipMsg *msg);

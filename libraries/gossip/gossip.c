@@ -11,8 +11,7 @@ void gossip_on_radio_rx(const uint8_t *data, uint8_t len) {
   }
 
   const GossipMsg *msg = (const GossipMsg *)data;
-
-  platform_log("gossip_on_radio_rx");
+  platform_trace_msg(msg);
 
   distributed_on_msg_rx((GossipMsg *)msg);
 }

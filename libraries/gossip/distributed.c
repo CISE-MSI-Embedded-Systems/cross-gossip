@@ -18,26 +18,21 @@ static GossipMsgId next_msg_id() {
 
 /* ---- distributed callbacks ---- */
 void distributed_on_msg_rx(const GossipMsg *msg) {
-  platform_log("distributed_on_msg_rx");
   (void)msg;
   if (node_id == 0) {
-    platform_log("WARN: ignoring node_id == 0");
+    return;
   }
 
   if (msg->id.node_id == node_id) {
-    platform_log("WARN: same node_id");
     return;
   }
 
   switch (msg->type) {
   case GOSSIP_TYPE_HEARTBEAT: {
-    platform_log("recieved: heartbeat");
     break;
   }
   case GOSSIP_TYPE_DATA: {
     GossipMsgData data = msg->as.data;
-    platform_log("recieved: data");
-    platform_log("node_id = %d, seq = %d", msg->id.node_id, msg->id.seq);
     if (platform_storage_find(msg->id) == NULL) {
       StorageRecord record = {
         .msg_id = msg->id,
@@ -73,7 +68,6 @@ static void broadcast_sensor_data(void) {
 }
 
 static void heartbeat(void) {
-  platform_log("heartbeat");
   GossipMsg msg = {0};
   msg.id = next_msg_id();
   msg.type = GOSSIP_TYPE_HEARTBEAT;
@@ -83,8 +77,8 @@ static void heartbeat(void) {
 void distributed_on_init(void) {
   node_id = platform_node_id();
   assert(node_id != 0 && "can't have node_id == 0");
-  platform_log("after assert");
   platform_timer_start(1000, broadcast_sensor_data);
   platform_timer_start(5000, heartbeat);
-  platform_log("after timer setup");
+  platform_timer_start(100, heartbeat);
+  platform_log("initialized");
 }

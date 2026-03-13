@@ -6,7 +6,4 @@ set(CMAKE_C_STANDARD 11)
 
 add_subdirectory(libraries)
 add_subdirectory(simulations)
-
-enable_testing()
-
 add_subdirectory(tests)
