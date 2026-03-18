@@ -2,3 +2,4 @@ simulations/build/*
 simulations/.cache/
 build/*
 .cache/
+pi/build/*

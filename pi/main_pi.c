@@ -1,9 +1,10 @@
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 
-#include "gossip/distributed.h"
-#include "gossip/gossip.h"
-#include "gossip/platform.h"
+#include "../libraries/gossip/distributed.h"
+#include "../libraries/gossip/gossip.h"
+#include "../libraries/gossip/platform.h"
+#include "../libraries/sqlite/sqlite3.h"
 
 #include <arpa/inet.h>
 #include <assert.h>
@@ -24,14 +25,48 @@
 //
 #define MCAST_PORT 5000
 #define MCAST_ADDR "239.192.0.1"
+sqlite3 *db;
+int status;
+
+// Utilize sqlite for saving and loading storage records on this platform
+// Placeholder SCHEMA:
+// | msg_id | var_unit_1 = current_amps | var_unit_2 = voltage_volts |
+// |    1   |            10.12          |             5              |
+// ... https://sqlite.org/cintro.html
 
 // TODO: impl
 StorageRecord *platform_storage_find(GossipMsgId msg_id) {
   (void)msg_id;
   return NULL;
 }
+
 // TODO: impl
-void platform_storage_store(const StorageRecord *record) { (void)record; }
+void platform_storage_store(const StorageRecord *record) {
+  StorageRecord rec = *record;
+  uint32_t msg_id = rec.msg_id.node_id;
+  uint32_t seq = rec.msg_id.seq;
+  GossipMsgData sensor_data = rec.sensor_data;
+  uint32_t voltage_volts = sensor_data.voltage_volts;
+  uint32_t current_amps = sensor_data.current_amps;
+
+  const char *insert = "INSERT INTO records (node_id, seq, voltage, current) VALUES (?, ?, ?, ?)";
+  sqlite3_stmt *stmt;
+  status = sqlite3_prepare(db, insert, -1, &stmt, NULL);
+  if(status!=0){
+    printf("Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+  }
+
+  sqlite3_bind_int(stmt, 1, msg_id);
+  sqlite3_bind_int(stmt, 2, seq);
+  sqlite3_bind_double(stmt, 3, voltage_volts);
+  sqlite3_bind_double(stmt, 4, current_amps);
+  
+  status = sqlite3_step(stmt);
+  if(status!=SQLITE_DONE){
+    printf("Failed to execute statement: %s\n", sqlite3_errmsg(db));
+  }
+  sqlite3_finalize(stmt);
+}
 
 #define PLATFORM_MAX_TIMERS 10
 timer_t timers[PLATFORM_MAX_TIMERS];
@@ -170,68 +205,98 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  const char *filename = "storage.db"; 
+  status = sqlite3_open(filename, &db);
+  if(status != 0){
+    printf("Failed DB init: %s\n", sqlite3_errmsg(db));
+  }
+
+  const char *create_table = "CREATE TABLE IF NOT EXISTS records (node_id INTEGER, seq INTEGER, voltage REAL, current REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);";
+  status = sqlite3_exec(db, create_table, 0, 0, 0);
+  if(status!=0){
+    printf("Table creation failed: %s\n", sqlite3_errmsg(db));
+  }
+
   node_id = (uint32_t)atoi(argv[1]);
   trace_msg_mq_name = argv[2];
 
-  // RX socket
-  int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (rx_fd < 0)
-    return 1;
+  printf("Beginning insertion test...\n");
+  // Dummy storage record for testing
+  GossipMsgId dummy_id;
+  dummy_id.node_id = 1;
+  dummy_id.seq = 1;
+  
+  StorageRecord dummy_data;
+  dummy_data.msg_id = dummy_id;
+  dummy_data.sensor_data.voltage_volts = 9;
+  dummy_data.sensor_data.current_amps = 4;
 
-  int reuse = 1;
-  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-#endif
+  const StorageRecord *dummy_rec = &dummy_data;
+  platform_storage_store(dummy_rec);
 
-  struct sockaddr_in addr = {0};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(MCAST_PORT);
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  printf("Beginning selection test...\n");
+  sqlite3_close(db);
 
-  if (bind(rx_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    close(rx_fd);
-    rx_fd = -1;
-    return 1;
-  }
-
-  struct ip_mreq mreq = {0};
-  mreq.imr_multiaddr.s_addr = inet_addr(MCAST_ADDR);
-  mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-  setsockopt(rx_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
-
-  // TX socket
-  tx_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (tx_fd < 1) {
-    close(rx_fd);
-    rx_fd = -1;
-    return 1;
-  }
-
-  unsigned char ttl = 1;
-  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
-  unsigned char loop = 1;
-  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
-
-  distributed_on_init();
-
-  fd_set readfds;
-  while (1) {
-    FD_ZERO(&readfds);
-    if (rx_fd >= 0)
-      FD_SET(rx_fd, &readfds);
-    int ret = select(rx_fd + 1, &readfds, NULL, NULL, NULL);
-    if (ret > 0 && FD_ISSET(rx_fd, &readfds)) {
-      uint8_t buf[1024];
-      ssize_t n = read(rx_fd, buf, sizeof(buf));
-      if (n > 0)
-        gossip_on_radio_rx(buf, n);
-    }
-  }
-
-  if (rx_fd >= 0)
-    close(rx_fd);
-  if (tx_fd >= 0)
-    close(tx_fd);
-  rx_fd = tx_fd = -1;
 }
+// RX socket
+//  int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
+//  if (rx_fd < 0)
+//    return 1;
+//
+//  int reuse = 1;
+//  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+//#ifdef SO_REUSEPORT
+//  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+//#endif
+//
+//  struct sockaddr_in addr = {0};
+//  addr.sin_family = AF_INET;
+//  addr.sin_port = htons(MCAST_PORT);
+//  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+//
+//  if (bind(rx_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+//    close(rx_fd);
+//    rx_fd = -1;
+//    return 1;
+//  }
+//
+//  struct ip_mreq mreq = {0};
+//  mreq.imr_multiaddr.s_addr = inet_addr(MCAST_ADDR);
+//  mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+//  setsockopt(rx_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+//
+//  // TX socket
+//  tx_fd = socket(AF_INET, SOCK_DGRAM, 0);
+//  if (tx_fd < 1) {
+//    close(rx_fd);
+//    rx_fd = -1;
+//    return 1;
+//  }
+//
+//  unsigned char ttl = 1;
+//  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+//  unsigned char loop = 1;
+//  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+//
+//  distributed_on_init();
+//
+//  fd_set readfds;
+//  while (1) {
+//    FD_ZERO(&readfds);
+//    if (rx_fd >= 0)
+//      FD_SET(rx_fd, &readfds);
+//    int ret = select(rx_fd + 1, &readfds, NULL, NULL, NULL);
+//    if (ret > 0 && FD_ISSET(rx_fd, &readfds)) {
+//      uint8_t buf[1024];
+//      ssize_t n = read(rx_fd, buf, sizeof(buf));
+//      if (n > 0)
+//        gossip_on_radio_rx(buf, n);
+//    }
+//  }
+//
+//  if (rx_fd >= 0)
+//    close(rx_fd);
+//  if (tx_fd >= 0)
+//    close(tx_fd);
+//  rx_fd = tx_fd = -1;
+//}
