@@ -27,20 +27,28 @@
 #define MCAST_ADDR "239.192.0.1"
 sqlite3 *db;
 int status;
-
 // Utilize sqlite for saving and loading storage records on this platform
-// Placeholder SCHEMA:
-// | msg_id | var_unit_1 = current_amps | var_unit_2 = voltage_volts |
-// |    1   |            10.12          |             5              |
 // ... https://sqlite.org/cintro.html
 
-// TODO: impl
+// TODO: test on pi
 StorageRecord *platform_storage_find(GossipMsgId msg_id) {
-  (void)msg_id;
+  uint32_t id = msg_id.node_id;
+  const char *find = "SELECT * FROM records WHERE node_id = ?;";
+  sqlite3_stmt *stmt;
+  status = sqlite3_prepare(db, find, -1, &stmt, NULL);
+  if(status!=0){
+    printf("Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+  }
+
+  sqlite3_bind_int(stmt, 1, id);
+  status = sqlite3_step(stmt);
+  if(status!=SQLITE_DONE){
+    printf("Failed to execute statement: %s\n", sqlite3_errmsg(db));
+  }
+  sqlite3_finalize(stmt);
   return NULL;
 }
 
-// TODO: impl
 void platform_storage_store(const StorageRecord *record) {
   StorageRecord rec = *record;
   uint32_t msg_id = rec.msg_id.node_id;
