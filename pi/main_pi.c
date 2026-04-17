@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <mqueue.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include <sys/select.h>
 #include <sys/signal.h>
@@ -30,8 +31,14 @@ int status;
 // Utilize sqlite for saving and loading storage records on this platform
 // ... https://sqlite.org/cintro.html
 
-// TODO: test on pi
+// NOTE: If duplicate node_id's exist, current implementation shows the oldest entry.
+// SCHEMA: node_id (int) | seq (int) | voltage (float) | current (float) | Timestamp (TIMESTAMP)
 StorageRecord *platform_storage_find(GossipMsgId msg_id) {
+  //   typedef struct {
+  //   GossipMsgId msg_id;
+  //   GossipMsgData sensor_data;
+  // } StorageRecord;
+  
   uint32_t id = msg_id.node_id;
   const char *find = "SELECT * FROM records WHERE node_id = ?;";
   sqlite3_stmt *stmt;
@@ -42,10 +49,28 @@ StorageRecord *platform_storage_find(GossipMsgId msg_id) {
 
   sqlite3_bind_int(stmt, 1, id);
   status = sqlite3_step(stmt);
-  if(status!=SQLITE_DONE){
+
+  int node_id;
+  double voltage;
+  double current;
+  if(status == SQLITE_ROW){
+    node_id = sqlite3_column_int(stmt, 0);
+    voltage = sqlite3_column_double(stmt, 2);
+    current = sqlite3_column_double(stmt, 3);
+  }
+  else if(status == SQLITE_DONE){
+    printf("No matching record found.\n");
+  }
+  else{
     printf("Failed to execute statement: %s\n", sqlite3_errmsg(db));
   }
+  
   sqlite3_finalize(stmt);
+  printf("Node ID: %d\n", node_id);
+  printf("Node Voltage (V): %f\n", voltage);
+  printf("Node Current (A): %f\n", current);
+
+  // Return StorageRecord with gathered data, not NULL
   return NULL;
 }
 
@@ -213,6 +238,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  srand(time(NULL));
   const char *filename = "storage.db"; 
   status = sqlite3_open(filename, &db);
   if(status != 0){
@@ -231,20 +257,20 @@ int main(int argc, char *argv[]) {
   printf("Beginning insertion test...\n");
   // Dummy storage record for testing
   GossipMsgId dummy_id;
-  dummy_id.node_id = 1;
-  dummy_id.seq = 1;
+  dummy_id.node_id = node_id;
+  dummy_id.seq = 1; // What exactly is seq?
   
   StorageRecord dummy_data;
   dummy_data.msg_id = dummy_id;
-  dummy_data.sensor_data.voltage_volts = 9;
-  dummy_data.sensor_data.current_amps = 4;
+  dummy_data.sensor_data.voltage_volts = rand()%10;
+  dummy_data.sensor_data.current_amps = rand()%10;
 
   const StorageRecord *dummy_rec = &dummy_data;
   platform_storage_store(dummy_rec);
 
   printf("Beginning selection test...\n");
+  platform_storage_find(dummy_data.msg_id);
   sqlite3_close(db);
-
 }
 // RX socket
 //  int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
