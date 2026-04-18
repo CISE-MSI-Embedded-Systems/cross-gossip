@@ -50,13 +50,13 @@ StorageRecord *platform_storage_find(GossipMsgId msg_id) {
   sqlite3_bind_int(stmt, 1, id);
   status = sqlite3_step(stmt);
 
-  int node_id;
-  double voltage;
-  double current;
+  uint32_t seq;
+  uint32_t voltage;
+  uint32_t current;
   if(status == SQLITE_ROW){
-    node_id = sqlite3_column_int(stmt, 0);
-    voltage = sqlite3_column_double(stmt, 2);
-    current = sqlite3_column_double(stmt, 3);
+    seq = sqlite3_column_int(stmt, 1);
+    voltage = sqlite3_column_int(stmt, 2);
+    current = sqlite3_column_int(stmt, 3);
   }
   else if(status == SQLITE_DONE){
     printf("No matching record found.\n");
@@ -66,12 +66,20 @@ StorageRecord *platform_storage_find(GossipMsgId msg_id) {
   }
   
   sqlite3_finalize(stmt);
-  printf("Node ID: %d\n", node_id);
-  printf("Node Voltage (V): %f\n", voltage);
-  printf("Node Current (A): %f\n", current);
+  printf("Node ID: %d\n", id);
+  printf("Seq Num: %d\n", seq);
+  printf("Node Voltage (V): %d\n", voltage);
+  printf("Node Current (A): %d\n", current);
 
   // Return StorageRecord with gathered data, not NULL
-  return NULL;
+  GossipMsgData sensor_data;
+  sensor_data.voltage_volts = voltage;
+  sensor_data.current_amps = current;
+
+  StorageRecord *record = malloc(sizeof(StorageRecord));
+  record->msg_id = msg_id;
+  record->sensor_data = sensor_data;
+  return record;
 }
 
 void platform_storage_store(const StorageRecord *record) {
