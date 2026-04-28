@@ -43,5 +43,10 @@ main_pi.c
 ../libraries/gossip/gossip.c
 ../libraries/sqlite/sqlite3.c)
 
+# Find packages, such as libmodbus
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBMODBUS REQUIRED libmodbus)
+
 # Add any libraries
-# target_link_libraries(cosine_series m)
+target_include_directories(pi PRIVATE ${LIBMODBUS_INCLUDE_DIRS})
+target_link_libraries(pi ${LIBMODBUS_LIBRARIES})

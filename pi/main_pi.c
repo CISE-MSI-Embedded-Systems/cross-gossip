@@ -6,6 +6,10 @@
 #include "../libraries/gossip/platform.h"
 #include "../libraries/sqlite/sqlite3.h"
 
+// LIBMODBUS Include
+#include <modbus.h>
+#include <errno.h>
+
 #include <arpa/inet.h>
 #include <assert.h>
 #include <stdarg.h>
@@ -34,6 +38,7 @@ int status;
 // NOTE: If duplicate node_id's exist, current implementation shows the oldest entry.
 // SCHEMA: node_id (int) | seq (int) | voltage (float) | current (float) | Timestamp (TIMESTAMP)
 StorageRecord *platform_storage_find(GossipMsgId msg_id) {
+
   //   typedef struct {
   //   GossipMsgId msg_id;
   //   GossipMsgData sensor_data;
@@ -185,11 +190,34 @@ void platform_timer_stop(int idx) {
   callbacks[idx] = NULL;
 }
 
-// TODO: better data faking
 static SensorData fake_sensor_data = {
-    .current_amps = 0,
-    .voltage_volts = 0,
+  .current_amps = 0,
+  .voltage_volts = 0,
 };
+
+// Gets register data from smart meter simulator
+void platform_sensor_read_simulator()
+{
+  const char MODBUS_TCP_ADDR[] = "100.112.125.111"; // Addres of machine hosting simulator server
+  const int PORT = 1502; // Match with port used in simulator server
+   
+  modbus_t *mb;
+  uint16_t tab_reg[32];
+  mb = modbus_new_tcp(MODBUS_TCP_ADDR, PORT);
+  if(modbus_connect(mb) == -1)
+  {
+     fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
+     modbus_free(mb);
+     return;
+  }
+  printf("Registers read: %d\n",modbus_read_registers(mb, 0, 30, tab_reg));
+
+  //TODO: Take data out from the register into SensorData var
+  
+  modbus_close(mb);
+  modbus_free(mb);
+}
+
 
 void platform_sensor_read(SensorData *sensor_data) {
   *sensor_data = fake_sensor_data;
@@ -197,6 +225,7 @@ void platform_sensor_read(SensorData *sensor_data) {
   sensor_data->current_amps += 1;
   sensor_data->voltage_volts += 1;
 }
+
 
 static int tx_fd = -1;
 void platform_radio_tx(const uint8_t *data, uint8_t len) {
@@ -246,7 +275,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  srand(time(NULL));
+  /* TESTING STORAGE METHODS */
+  
+  /* srand(time(NULL));
   const char *filename = "storage.db"; 
   status = sqlite3_open(filename, &db);
   if(status != 0){
@@ -278,67 +309,73 @@ int main(int argc, char *argv[]) {
 
   printf("Beginning selection test...\n");
   platform_storage_find(dummy_data.msg_id);
-  sqlite3_close(db);
+  sqlite3_close(db); */
+  
+  /* TESTING STORAGE METHODS */
+
+  platform_sensor_read_simulator();
+
+  /* // RX socket
+  int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (rx_fd < 0)
+    return 1;
+
+  int reuse = 1;
+  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+  #ifdef SO_REUSEPORT
+  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+  #endif
+
+  struct sockaddr_in addr = {0};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(MCAST_PORT);
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+  if (bind(rx_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    close(rx_fd);
+    rx_fd = -1;
+    return 1;
+  }
+
+  struct ip_mreq mreq = {0};
+  mreq.imr_multiaddr.s_addr = inet_addr(MCAST_ADDR);
+  mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+  setsockopt(rx_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+
+  // TX socket
+  tx_fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (tx_fd < 1) {
+    close(rx_fd);
+    rx_fd = -1;
+    return 1;
+  }
+
+  unsigned char ttl = 1;
+  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+  unsigned char loop = 1;
+  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+
+  distributed_on_init();
+
+  fd_set readfds;
+  while (1) {
+    FD_ZERO(&readfds);
+    if (rx_fd >= 0)
+      FD_SET(rx_fd, &readfds);
+    int ret = select(rx_fd + 1, &readfds, NULL, NULL, NULL);
+    if (ret > 0 && FD_ISSET(rx_fd, &readfds)) {
+      uint8_t buf[1024];
+      ssize_t n = read(rx_fd, buf, sizeof(buf));
+      if (n > 0)
+        gossip_on_radio_rx(buf, n);
+    }
+  }
+
+  if (rx_fd >= 0)
+    close(rx_fd);
+  if (tx_fd >= 0)
+    close(tx_fd);
+  rx_fd = tx_fd = -1;
+  */
 }
-// RX socket
-//  int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
-//  if (rx_fd < 0)
-//    return 1;
-//
-//  int reuse = 1;
-//  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-//#ifdef SO_REUSEPORT
-//  setsockopt(rx_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-//#endif
-//
-//  struct sockaddr_in addr = {0};
-//  addr.sin_family = AF_INET;
-//  addr.sin_port = htons(MCAST_PORT);
-//  addr.sin_addr.s_addr = htonl(INADDR_ANY);
-//
-//  if (bind(rx_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-//    close(rx_fd);
-//    rx_fd = -1;
-//    return 1;
-//  }
-//
-//  struct ip_mreq mreq = {0};
-//  mreq.imr_multiaddr.s_addr = inet_addr(MCAST_ADDR);
-//  mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-//  setsockopt(rx_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
-//
-//  // TX socket
-//  tx_fd = socket(AF_INET, SOCK_DGRAM, 0);
-//  if (tx_fd < 1) {
-//    close(rx_fd);
-//    rx_fd = -1;
-//    return 1;
-//  }
-//
-//  unsigned char ttl = 1;
-//  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
-//  unsigned char loop = 1;
-//  setsockopt(tx_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
-//
-//  distributed_on_init();
-//
-//  fd_set readfds;
-//  while (1) {
-//    FD_ZERO(&readfds);
-//    if (rx_fd >= 0)
-//      FD_SET(rx_fd, &readfds);
-//    int ret = select(rx_fd + 1, &readfds, NULL, NULL, NULL);
-//    if (ret > 0 && FD_ISSET(rx_fd, &readfds)) {
-//      uint8_t buf[1024];
-//      ssize_t n = read(rx_fd, buf, sizeof(buf));
-//      if (n > 0)
-//        gossip_on_radio_rx(buf, n);
-//    }
-//  }
-//
-//  if (rx_fd >= 0)
-//    close(rx_fd);
-//  if (tx_fd >= 0)
-//    close(tx_fd);
-//  rx_fd = tx_fd = -1;
-//}
+
