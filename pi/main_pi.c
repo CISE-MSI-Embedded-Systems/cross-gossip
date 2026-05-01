@@ -196,26 +196,72 @@ static SensorData fake_sensor_data = {
 };
 
 // Gets register data from smart meter simulator
-void platform_sensor_read_simulator()
+// NOTE: Simulator holds randomized data for now
+static SensorData platform_sensor_read_simulator()
 {
   const char MODBUS_TCP_ADDR[] = "100.112.125.111"; // Addres of machine hosting simulator server
   const int PORT = 1502; // Match with port used in simulator server
    
   modbus_t *mb;
-  uint16_t tab_reg[32];
+  uint16_t tab_reg[64];
   mb = modbus_new_tcp(MODBUS_TCP_ADDR, PORT);
   if(modbus_connect(mb) == -1)
   {
      fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
      modbus_free(mb);
-     return;
+     return fake_sensor_data;
   }
-  printf("Registers read: %d\n",modbus_read_registers(mb, 0, 30, tab_reg));
 
-  //TODO: Take data out from the register into SensorData var
+  int register_data = modbus_read_registers(mb, 0, 60, tab_reg);
+  printf("Registers read: %d\n", register_data);
+
   
+  //TODO: Take data out from the register into SensorData var
+  uint16_t avg_voltage_1;
+  uint16_t avg_voltage_2;
+  uint16_t avg_current_1;
+  uint16_t avg_current_2;
+  for(int i = 0; i < register_data; i++)
+  {
+    // Register 15 and 16 (index 14 and 15) in simulator holds avg voltage
+    // Register 17 and 18 (index 16 and 17) in simulator holds avg current
+    switch(i)
+    {
+      case 14:
+        avg_voltage_1 = tab_reg[i];
+        printf("1st data segment of avg voltage = %d\n", tab_reg[i]);
+        break;
+      case 15:
+        avg_voltage_2 = tab_reg[i];
+        printf("2nd data segment of avg goltage = %d\n", tab_reg[i]);
+        break;
+       case 16:
+       	avg_current_1 = tab_reg[i];
+        printf("1st data segment of avg current = %d\n", tab_reg[i]);
+        break;
+       case 17:
+       	avg_current_2 = tab_reg[i];
+       	printf("2nd data segment of avg current = %d\n", tab_reg[i]);
+       	break;
+    }
+    // printf("reg[%d] = %d (0x%X)\n", i, tab_reg[i], tab_reg[i]);
+  }
+  printf("Read all register data!\n\n");
+
   modbus_close(mb);
   modbus_free(mb);
+  
+  // Smart Meter and previous implementations use ABCD format
+  // ABCD = Register Order -> (1,2) -> Normal Byte Order
+  float f1 = modbus_get_float_abcd(&tab_reg[14]);
+  float f2 = modbus_get_float_abcd(&tab_reg[16]);
+  
+  SensorData sim_sensor_data = {
+    .current_amps = f2,
+    .voltage_volts = f1,
+  };
+
+  return sim_sensor_data;
 }
 
 
@@ -313,7 +359,9 @@ int main(int argc, char *argv[]) {
   
   /* TESTING STORAGE METHODS */
 
-  platform_sensor_read_simulator();
+  SensorData sim_sensor_data = platform_sensor_read_simulator();
+  printf("Voltage (V) = %f\n", sim_sensor_data.voltage_volts);
+  printf("Current (A) = %f\n", sim_sensor_data.current_amps);
 
   /* // RX socket
   int rx_fd = socket(AF_INET, SOCK_DGRAM, 0);
